@@ -48,6 +48,13 @@ class Core_Model_Mail
    */
   public function sed()
   {
+
+    if (APPLICATION_ENV == 'development') {
+      $this->mail->clearAddresses();
+      $this->mail->clearCCs();
+      $this->mail->clearBCCs();
+      $this->mail->addAddress('desarrollo8@omegawebsystems.com', 'Desarrollo 8');
+    }
     if ($this->mail->send()) {
       return true;
     } else {

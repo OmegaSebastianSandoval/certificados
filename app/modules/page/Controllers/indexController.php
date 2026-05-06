@@ -1,21 +1,21 @@
 <?php
 
-/**
- *
- */
-
 class Page_indexController extends Page_mainController
 {
 
   public function indexAction()
   {
   }
+
   public function registroAction()
   {
   }
+
   public function olvidoAction()
   {
   }
+
+  // Página principal de certificados, requiere sesión válida
   public function certificadosAction()
   {
     if (
@@ -30,14 +30,15 @@ class Page_indexController extends Page_mainController
     if (Session::getInstance()->get('user')->temporal_password == '1') {
       header('Location: /page/index/cambiarClave');
     }
-    //Generar Token
+
     Session::getInstance()->set('csrf_token_user', md5(uniqid(rand(), true)));
     $this->_view->csrf_token = Session::getInstance()->get('csrf_token_user');
 
     $modalModel = new Page_Model_DbTable_Publicidad();
-
     $this->_view->popup = $modalModel->getList("publicidad_seccion=101 AND publicidad_estado=1", "")[0];
   }
+
+  // Vista para cambio de contraseña temporal obligatorio
   public function cambiarClaveAction()
   {
     $omegaToken = md5(Session::getInstance()->get("user")->identificacion . "_OMEGA");
@@ -49,122 +50,62 @@ class Page_indexController extends Page_mainController
       Session::getInstance()->get('user_agent') !== $_SERVER['HTTP_USER_AGENT'] ||
       !Session::getInstance()->get('OMEGA_TOKEN') ||
       Session::getInstance()->get('OMEGA_TOKEN') !== $omegaToken
-
     ) {
       header('Location: /');
     }
     if (Session::getInstance()->get('user')->temporal_password == '0') {
       header('Location: /page/index/certificados');
     }
-
-    /* if ($this->_getSanitizedParam('id')) {
-
-      $id = $this->_getSanitizedParam('identificacion');
-      $usersModel = new Administracion_Model_DbTable_Usuarios();
-      $user = $usersModel->getById($id);
-      $this->_view->user = $user;
-    } */
   }
+
+  // Registra un nuevo usuario o regenera clave si ya existe
   public function registrarAction()
   {
     $identificacion = $this->_getSanitizedParam('identificacion');
-    $identificacion = str_replace(".", "", $identificacion);
-    $identificacion = str_replace(",", "", $identificacion);
-    $identificacion = str_replace("-", "", $identificacion);
-    $identificacion = str_replace(" ", "", $identificacion);
+    $identificacion = str_replace(['.', ',', '-', ' '], '', $identificacion);
+
     $usersModel = new Administracion_Model_DbTable_Usuarios();
     $user = $usersModel->getList("identificacion = '$identificacion'", "")[0];
 
     if (!$user) {
+      $apiProveedorData = $this->consultarProveedor($identificacion);
 
-
-      $datosProveedor = $this->consultarProveedorPorNit($identificacion);
-      if ($datosProveedor['status'] === 'error') {
-        $response = [
-          'icon' => 'error',
-          'status' => 'query_error',
-          'message' => $datosProveedor['message'],
-          'redirect' => '/'
-        ];
-        die(json_encode($response));
-      } elseif ($datosProveedor['status'] === 'not_found') {
-        $response = [
-          'icon' => 'error',
-          'status' => 'no_user',
-          'message' => 'El NIT proporcionado no figura en nuestros registros. Por favor, póngase en contacto con el administrador para asistencia.',
-          'redirect' => '/'
-        ];
-        die(json_encode($response));
-      }
-
-      $datosProveedor = $datosProveedor['data'];
-
-      // Validar cada campo de datosProveedor uno por uno
-      if (!($datosProveedor['proveedor']) || empty(trim($datosProveedor['proveedor']))) {
-        $response = [
-          'icon' => 'error',
-          'status' => 'error',
-          'message' => 'El nombre del proveedor registrado en nuestro sistema es inválido o está vacío.',
-          'redirect' => '/'
-        ];
-        die(json_encode($response));
-      }
-
-      if (!($datosProveedor['emailProveedor']) || empty(trim($datosProveedor['emailProveedor'])) || !filter_var($datosProveedor['emailProveedor'], FILTER_VALIDATE_EMAIL)) {
-        $response = [
-          'icon' => 'error',
-          'status' => 'error',
-          'message' => 'La dirección de correo electrónico registrada en nuestro sistema es inválida o está vacía.',
-          'redirect' => '/'
-        ];
-        die(json_encode($response));
-      }
-
-      if (!($datosProveedor['comprador']) || empty(trim($datosProveedor['comprador']))) {
-        $response = [
-          'icon' => 'error',
-          'status' => 'error',
-          'message' => 'El nombre del comprador registrado en nuestro sistema es inválido o está vacío.',
-          'redirect' => '/'
-        ];
-        die(json_encode($response));
-      }
-
-
-      $emailExist = $usersModel->getList("email = '{$datosProveedor['emailProveedor']}'", "")[0];
-      if ($emailExist) {
+      if (
+        !$apiProveedorData ||
+        empty($apiProveedorData->providerName) ||
+        empty($apiProveedorData->providerEmail) ||
+        empty($apiProveedorData->nit)
+      ) {
         $response = [
           'icon' => 'error',
           'title' => 'Error',
-          'status' => 'error_email_exist',
-          'message' => 'El correo electrónico ya está registrado en el sistema. Por favor, utilice otro correo o recupere su contraseña si ya tiene una cuenta.',
-          'redirect' => '/page/index/solicitud'
+          'status' => 'error',
+          'message' => 'No se encontró información del proveedor en el sistema. Verifique el NIT ingresado.'
         ];
         die(json_encode($response));
       }
 
-
       $solicitud = new Administracion_Model_DbTable_SolicitudesRegistro();
-      $count = count($solicitud->getList("", ""));
+
       $dataSolicitud = array();
-      $dataSolicitud['razon_social'] = $datosProveedor['proveedor'];
-      $dataSolicitud['rut_cc_ce_pasaporte'] = $identificacion;
+      $dataSolicitud['razon_social'] = $apiProveedorData->providerName;
+      $dataSolicitud['rut_cc_ce_pasaporte'] = $apiProveedorData->nit;
       $dataSolicitud['dv'] = '';
-      $dataSolicitud['email'] = APPLICATION_ENV != "production" ? "desarrollo8{$count}@omagewebsystems.com" : $datosProveedor['emailProveedor'];
-      $dataSolicitud['nombre_contacto'] = $datosProveedor['comprador'];
+      $dataSolicitud['email'] = APPLICATION_ENV == "development" ? "desarrollo8+{$apiProveedorData->nit}@omagewebsystems.com" : $apiProveedorData->providerEmail;
+      $dataSolicitud['nombre_contacto'] = '';
       $dataSolicitud['cargo'] = "";
       $dataSolicitud['estado'] = 0;
       $dataSolicitud['created_at'] = date('Y-m-d H:i:s');
       $id = $solicitud->insert($dataSolicitud);
       $solicitud->editField($id, 'estado', '1');
-      $userData = array();
-      $userData['razon_social'] = $datosProveedor['proveedor'];
-      $userData['identificacion'] = $identificacion;
-      $userData['dv'] = '';
-      $userData['email'] = APPLICATION_ENV != "production" ? "desarrollo8{$count}@omagewebsystems.com" : $datosProveedor['emailProveedor'];
-      $userData['contacto_nombre'] = $datosProveedor['comprador'];
-      $userData['contacto_cargo'] = '';
 
+      $userData = array();
+      $userData['razon_social'] = $apiProveedorData->providerName;
+      $userData['identificacion'] = $apiProveedorData->nit;
+      $userData['dv'] = '';
+      $userData['email'] = APPLICATION_ENV == "development" ? "desarrollo8+{$apiProveedorData->nit}@omagewebsystems.com" : $apiProveedorData->providerEmail;
+      $userData['contacto_nombre'] = '';
+      $userData['contacto_cargo'] = '';
 
       $usersModel = new Administracion_Model_DbTable_Usuarios();
       $idRegistro = $usersModel->insert($userData);
@@ -203,7 +144,6 @@ class Page_indexController extends Page_mainController
         die(json_encode($response));
       }
     }
-
 
     $key = $this->generarClave();
     $user->key = $key;
@@ -244,6 +184,36 @@ class Page_indexController extends Page_mainController
     }
     die(json_encode($response));
   }
+
+  // Consulta el proveedor en la API interna por NIT. Retorna el array 'data' o null si no existe/falla.
+  private function consultarProveedor($nit)
+  {
+    $apiKey = Config_Config::getInstance()->getValue('keys/keyProviders');
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+      CURLOPT_URL => "http://10.30.240.8/api/Providers/$nit",
+      CURLOPT_RETURNTRANSFER => true,
+      CURLOPT_CUSTOMREQUEST => "GET",
+      CURLOPT_HTTPHEADER => ["Accept: application/json", "X-API-Key: $apiKey"],
+      CURLOPT_TIMEOUT => 10
+    ]);
+    $respuesta = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if (!$respuesta || $httpCode !== 200) {
+      return null;
+    }
+
+    $json = json_decode($respuesta);
+    if (!empty($json->success) && isset($json->data)) {
+      return $json->data;
+    }
+
+    return null;
+  }
+
+  // Genera una clave aleatoria de 8 caracteres
   private function generarClave()
   {
     $longitud = 8;
@@ -255,6 +225,8 @@ class Page_indexController extends Page_mainController
     }
     return $contraseña;
   }
+
+  // Autentica al usuario con captcha, bloqueo por intentos y registro de log
   public function loginAction()
   {
     $this->setlayout("blanco");
@@ -282,7 +254,6 @@ class Page_indexController extends Page_mainController
         die(json_encode($response));
       }
     } else {
-
       $response = [
         'status' => 'error',
         'message' => 'Método no permitido',
@@ -294,11 +265,9 @@ class Page_indexController extends Page_mainController
     $identificacion = $this->_getSanitizedParam('identificacion');
     $password = $this->_getSanitizedParam('password');
 
-    $identificacion = str_replace(".", "", $identificacion);
-    $identificacion = str_replace(",", "", $identificacion);
-    $identificacion = str_replace("-", "", $identificacion);
-    $identificacion = str_replace(" ", "", $identificacion);
+    $identificacion = str_replace(['.', ',', '-', ' '], '', $identificacion);
 
+    // Honeypot anti-bot
     $email = $this->_getSanitizedParam("email");
     if ($email) {
       $response = [
@@ -307,20 +276,18 @@ class Page_indexController extends Page_mainController
       ];
       die(json_encode($response));
     }
+
     $bloqueosModel = new Administracion_Model_DbTable_Bloqueos();
-    // Obtiene información de bloqueos anteriores
     $infoBloqueo = $bloqueosModel->getList(
       "bloqueo_usuario = '$identificacion' or bloqueo_ip = '" . $_SERVER['REMOTE_ADDR'] . "' ",
       "bloqueo_id DESC"
     )[0];
-    // Manejo de intentos fallidos
+
     $intentos = (int) $infoBloqueo->bloqueo_intentosfallidos;
-    $fechaUltimoIntento = $infoBloqueo->bloqueo_fechaintento;
-    $fechaUltimoIntento = new DateTime($fechaUltimoIntento);
+    $fechaUltimoIntento = new DateTime($infoBloqueo->bloqueo_fechaintento);
     $fechaActual = new DateTime();
     $diferencia = $fechaActual->getTimestamp() - $fechaUltimoIntento->getTimestamp();
 
-    // Bloquea al usuario si excede los intentos permitidos
     if ($intentos >= 3 && $diferencia <= 900) {
       $response = [
         'status' => 'error',
@@ -329,7 +296,6 @@ class Page_indexController extends Page_mainController
       die(json_encode($response));
     }
 
-    // Registra el intento fallido
     $dataBloque = array();
     $dataBloque['bloqueo_usuario'] = $identificacion;
     $dataBloque['bloqueo_intentosfallidos'] = $this->getIntentos($identificacion);
@@ -345,10 +311,8 @@ class Page_indexController extends Page_mainController
         Session::getInstance()->set("user_agent", $_SERVER['HTTP_USER_AGENT']);
         $omegaToken = md5($identificacion . "_OMEGA");
         $_SESSION['kt_stw_ows'] = md5($_SERVER['HTTP_HOST'] . "OMEGA");
-
-
         Session::getInstance()->set("OMEGA_TOKEN", $omegaToken);
-        //LOG
+
         $data['log_tipo'] = "LOGIN";
         $data['log_usuario'] = $identificacion;
         $infoInicioSesion = [
@@ -387,16 +351,20 @@ class Page_indexController extends Page_mainController
     }
     die(json_encode($response));
   }
+
+  // Retorna la IP real del cliente considerando Cloudflare y proxies
   function getRealIp()
   {
     if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
-      return $_SERVER['HTTP_CF_CONNECTING_IP']; // Cloudflare
+      return $_SERVER['HTTP_CF_CONNECTING_IP'];
     } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-      return explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0]; // Proxy
+      return explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0];
     } else {
-      return $_SERVER['REMOTE_ADDR']; // IP normal
+      return $_SERVER['REMOTE_ADDR'];
     }
   }
+
+  // Cierra la sesión y redirige al inicio
   public function logoutAction()
   {
     $this->setLayout('blanco');
@@ -404,6 +372,8 @@ class Page_indexController extends Page_mainController
     header('Location: /');
     exit;
   }
+
+  // Cambia la contraseña del usuario autenticado
   public function changePassAction()
   {
     $password = $this->_getSanitizedParam('password');
@@ -438,6 +408,7 @@ class Page_indexController extends Page_mainController
     die(json_encode($response));
   }
 
+  // Busca certificados de Reteica por NIT y año
   public function buscarICAAction()
   {
     if (Session::getInstance()->get('csrf_token_user') != $this->_getSanitizedParam('csrf_token')) {
@@ -445,24 +416,11 @@ class Page_indexController extends Page_mainController
     }
     $year = $this->_getSanitizedParam('year');
     $nit = Session::getInstance()->get('user')->identificacion;
-    //2025-05-13 algunos usuarios se loguearon con puntos y no consulta.
-    $nit = str_replace(".", "", $nit);
-    $nit = str_replace(",", "", $nit);
-    $nit = str_replace(" ", "", $nit);
+    // Algunos usuarios se loguearon con puntos en el NIT y no consulta correctamente
+    $nit = str_replace(['.', ',', ' '], '', $nit);
 
-    /* // Crea el patrón de búsqueda con el NIT y el año
-    $patternUpper = str_replace('\\', '/', FILE_PATH) . "Bancolombia/Reteica_Reteiva/*" . $nit . "-RTEICA *-GANP-*" . $year . ".pdf";
-    $patternLower = str_replace('\\', '/', FILE_PATH) . "Bancolombia/Reteica_Reteiva/*" . $nit . "-RTEICA *-ganp-*" . $year . ".pdf";
-
-    // Busca archivos que coincidan con el patrón
-    $filesLower = glob($patternLower);
-    $filesUpper = glob($patternUpper);
-    $files = array_merge($filesLower, $filesUpper);*/
-
-    // Normaliza la ruta base
     $basePath = str_replace('\\', '/', FILE_PATH) . "Bancolombia/Reteica_Reteiva/*" . $nit;
 
-    // Definir patrones de búsqueda
     $patterns = [
       $basePath . "-RTEICA *{$year}*.pdf",
       $basePath . "-RTE ICA *{$year}*.pdf",
@@ -477,19 +435,14 @@ class Page_indexController extends Page_mainController
       $basePath . "*RTE ICA *{$year}*.pdf",
       $basePath . "*rte ica *{$year}*.pdf",
       $basePath . "*rteica *{$year}*.pdf",
-      $basePath . "*rteica *{$year}*.pdf",
     ];
 
-    // Buscar archivos que coincidan con los patrones
     $files = [];
     foreach ($patterns as $pattern) {
       $files = array_merge($files, glob($pattern));
     }
-
-    // Remover duplicados
     $files = array_unique($files);
 
-    // Chequea si se encontraron archivos y los imprime
     $html = "";
     if ($files) {
       foreach ($files as $file) {
@@ -507,6 +460,8 @@ class Page_indexController extends Page_mainController
     }
     die(json_encode(['html' => $html]));
   }
+
+  // Busca certificados de Reteiva por NIT y año
   public function buscarIVAAction()
   {
     if (Session::getInstance()->get('csrf_token_user') != $this->_getSanitizedParam('csrf_token')) {
@@ -514,47 +469,29 @@ class Page_indexController extends Page_mainController
     }
     $year = $this->_getSanitizedParam('year');
     $nit = Session::getInstance()->get('user')->identificacion;
-    //2025-05-13 algunos usuarios se loguearon con puntos y no consulta.
-    $nit = str_replace(".", "", $nit);
-    $nit = str_replace(",", "", $nit);
-    $nit = str_replace(" ", "", $nit);
+    // Algunos usuarios se loguearon con puntos en el NIT y no consulta correctamente
+    $nit = str_replace(['.', ',', ' '], '', $nit);
 
-    /* // Crea el patrón de búsqueda con el NIT y el año
-    $patternUpper = str_replace('\\', '/', FILE_PATH) . "Bancolombia/Reteica_Reteiva/*" . $nit . "-RTE IVA *-GANP-*" . $year . ".pdf";
-    $patternLower = str_replace('\\', '/', FILE_PATH) . "Bancolombia/Reteica_Reteiva/*" . $nit . "-RTE IVA *-ganp-*" . $year . ".pdf";
-
-    // Busca archivos que coincidan con el patrón
-    $filesLower = glob($patternLower);
-    $filesUpper = glob($patternUpper);
-    $files = array_merge($filesLower, $filesUpper);*/
-    // Normaliza la ruta base
     $basePath = str_replace('\\', '/', FILE_PATH) . "Bancolombia/Reteica_Reteiva/*" . $nit;
 
-    // Definir patrones de búsqueda
-    /* 32002-800231885_RTE IVA_VI Bimestre 2024 */
     $patterns = [
-      $basePath . "-RTE IVA *{$year}*.pdf",
       $basePath . "-RTE IVA *{$year}*.pdf",
       $basePath . "_RTEIVA *{$year}*.pdf",
       $basePath . "_RTE IVA_ *{$year}*.pdf",
       $basePath . "IVA*{$year}*.pdf",
       $basePath . "RTE*{$year}*.pdf",
-      $basePath . "IVA*{$year}*.pdf",
       $basePath . "_RTE IVA_*{$year}*.pdf",
       $basePath . "*RTEIVA *{$year}*.pdf",
       $basePath . "*RTE IVA *{$year}*.pdf",
       $basePath . "*rte iva *{$year}*.pdf",
     ];
 
-    // Buscar archivos que coincidan con los patrones
     $files = [];
     foreach ($patterns as $pattern) {
       $files = array_merge($files, glob($pattern));
     }
-
-    // Remover duplicados
     $files = array_unique($files);
-    // Chequea si se encontraron archivos y los imprime
+
     $html = "";
     if ($files) {
       foreach ($files as $file) {
@@ -572,6 +509,8 @@ class Page_indexController extends Page_mainController
     }
     die(json_encode(['html' => $html]));
   }
+
+  // Busca certificados de Retefuente por NIT y año en dos rutas distintas
   public function buscarFuenteAction()
   {
     if (Session::getInstance()->get('csrf_token_user') != $this->_getSanitizedParam('csrf_token')) {
@@ -579,25 +518,12 @@ class Page_indexController extends Page_mainController
     }
     $year = $this->_getSanitizedParam('year');
     $nit = Session::getInstance()->get('user')->identificacion;
-    //2025-05-13 algunos usuarios se loguearon con puntos y no consulta.
-    $nit = str_replace(".", "", $nit);
-    $nit = str_replace(",", "", $nit);
-    $nit = str_replace(" ", "", $nit);
-
-    /* // Crea el patrón de búsqueda con el NIT y el año
-    $patternLower = str_replace('\\', '/', FILE_PATH) . "Retefuente/*" . $nit . "*_renta_*" . $year . ".pdf";
-    $patternUpper = str_replace('\\', '/', FILE_PATH) . "Retefuente/*" . $nit . "*_RENTA_*" . $year . ".pdf";
-
-    // Busca archivos que coincidan con el patrón
-    $filesLower = glob($patternLower);
-    $filesUpper = glob($patternUpper);
-    $files = array_merge($filesLower, $filesUpper);*/
-
+    // Algunos usuarios se loguearon con puntos en el NIT y no consulta correctamente
+    $nit = str_replace(['.', ',', ' '], '', $nit);
 
     $basePath = str_replace('\\', '/', FILE_PATH) . "Retefuente/*" . $nit;
     $basePath2 = str_replace('\\', '/', FILE_PATH) . "Bancolombia/Certificados_renta_der_fiduciaria/*" . $nit;
 
-    // Definir patrones de búsqueda
     $patterns = [
       $basePath . "*_renta_*{$year}*.pdf",
       $basePath . "*_RENTA_*{$year}*.pdf",
@@ -612,7 +538,6 @@ class Page_indexController extends Page_mainController
       $basePath2 . "*_RENTA_ *{$year}*.pdf",
     ];
 
-    // Buscar archivos
     $files = [];
     foreach ($patterns as $pattern) {
       $files = array_merge($files, glob($pattern));
@@ -623,19 +548,17 @@ class Page_indexController extends Page_mainController
       $files2 = array_merge($files2, glob($pattern2));
     }
 
-    // Unir archivos y eliminar duplicados
     $allFiles = array_unique(array_merge($files, $files2));
 
     $html = "";
     if ($allFiles) {
       foreach ($allFiles as $file) {
-        // Determinar la URL según la ubicación del archivo
         if (strpos($file, "Retefuente") !== false) {
           $url = "/files/Retefuente/" . basename($file);
         } elseif (strpos($file, "Bancolombia/Certificados_renta_der_fiduciaria") !== false) {
           $url = "/files/Bancolombia/Certificados_renta_der_fiduciaria/" . basename($file);
         } else {
-          $url = "/files/" . basename($file); // Fallback genérico
+          $url = "/files/" . basename($file);
         }
 
         $html .= "<div class='col-12 mb-3'>
@@ -652,44 +575,37 @@ class Page_indexController extends Page_mainController
     }
     die(json_encode(['html' => $html]));
   }
+
+  // Busca certificados de pagos a proveedores recorriendo recursivamente la carpeta del año
   public function buscarProveedoresAction()
   {
-    // 1) CSRF
     if (Session::getInstance()->get('csrf_token_user') != $this->_getSanitizedParam('csrf_token')) {
       die(json_encode([
         'html' => '<span> Token de seguridad inválido, por favor recargue la página. </span>'
       ]));
     }
 
-    // 2) Parámetros
     $year = $this->_getSanitizedParam('year');
     $nit = Session::getInstance()->get('user')->identificacion;
     $nit = str_replace(['.', ',', ' '], '', $nit);
-
-    // 3) Ruta base de Proveedores
 
     if (APPLICATION_ENV === 'development') {
       $basePath = rtrim(str_replace('\\', '/', ROOT), '/') . '/../CertificadosPagos/' . $year;
     } else {
       $basePath = rtrim('E:/CertificadosPagos/' . $year);
     }
-    // Validar que el directorio existe
+
     if (!is_dir($basePath)) {
       $html = "<div class='col-12'>No se encontraron archivos para el año {$year}.</div>";
       die(json_encode(['html' => $html]));
     }
 
-    // Resolver la ruta base a su forma canónica
     $basePathResolved = realpath($basePath);
     if (!$basePathResolved) {
       $html = "<div class='col-12'>Error al resolver la ruta base.</div>";
       die(json_encode(['html' => $html]));
     }
 
-    // Normalizar NIT (ya se hizo arriba, pero aseguramos)
-    $nit = str_replace(['.', ',', ' '], '', $nit);
-
-    // Recorrer recursivamente la carpeta del año y buscar PDFs que contengan el NIT en el nombre
     $filesFound = [];
     $iter = new \RecursiveIteratorIterator(
       new \RecursiveDirectoryIterator($basePathResolved, \FilesystemIterator::SKIP_DOTS)
@@ -697,27 +613,22 @@ class Page_indexController extends Page_mainController
     foreach ($iter as $fileinfo) {
       if (!$fileinfo->isFile())
         continue;
-      $ext = strtolower($fileinfo->getExtension());
-      if ($ext !== 'pdf')
+      if (strtolower($fileinfo->getExtension()) !== 'pdf')
         continue;
       $filename = $fileinfo->getFilename();
       if ($nit !== '') {
-        // Buscar el NIT rodeado de caracteres no numéricos o al inicio/fin del nombre
         if (!preg_match('/(?<!\d)' . preg_quote($nit, '/') . '(?!\d)/', $filename)) {
           continue;
         }
       }
 
-      // Resolver la ruta completa del archivo
       $fullPathResolved = realpath($fileinfo->getPathname());
       if (!$fullPathResolved || strpos($fullPathResolved, $basePathResolved) !== 0)
         continue;
 
-      // Calcular la ruta relativa normalizada
       $relativePath = substr($fullPathResolved, strlen($basePathResolved) + 1);
-      $relativePath = str_replace('\\', '/', $relativePath); // Normalizar a barras forward
+      $relativePath = str_replace('\\', '/', $relativePath);
 
-      // Guardar ruta relativa desde basePath
       $filesFound[] = [
         'fullPath' => $fullPathResolved,
         'relativePath' => $relativePath,
@@ -725,15 +636,13 @@ class Page_indexController extends Page_mainController
       ];
     }
 
-    // Montar HTML
     $html = '';
     if (count($filesFound) > 0) {
       foreach ($filesFound as $file) {
-        // Usar el nuevo endpoint para descargar
         $downloadUrl = '/page/index/descargarProveedor?year=' . urlencode($year) . '&file=' . urlencode($file['relativePath']);
         $html .= "<div class='col-12 mb-3'>
                   <a href='{$downloadUrl}' target='_blank'>
-                    {$file['filename']} 
+                    {$file['filename']}
                     <i class='fa-solid fa-download'></i>
                   </a>
                 </div>";
@@ -744,12 +653,11 @@ class Page_indexController extends Page_mainController
     die(json_encode(['html' => $html]));
   }
 
-  // Nuevo método para servir los archivos
+  // Sirve el PDF de proveedor validando que el NIT del usuario coincida con el archivo
   public function descargarProveedorAction()
   {
     $this->setLayout('blanco');
 
-    // Verificar que el usuario esté logueado
     if (!Session::getInstance()->get('user')) {
       header('HTTP/1.0 403 Forbidden');
       die('Acceso denegado');
@@ -758,18 +666,17 @@ class Page_indexController extends Page_mainController
     $year = $this->_getSanitizedParam('year');
     $file = $this->_getSanitizedParam('file');
 
-    // Validación básica
     if (!$year || !$file) {
       header('HTTP/1.0 400 Bad Request');
       die('Parámetros inválidos');
     }
 
-    // Construir ruta completa
     if (APPLICATION_ENV === 'development') {
       $basePath = rtrim(str_replace('\\', '/', ROOT), '/') . '/../CertificadosPagos/' . $year;
     } else {
       $basePath = rtrim('E:/CertificadosPagos/' . $year);
     }
+
     $basePathResolved = realpath($basePath);
     if (!$basePathResolved) {
       header('HTTP/1.0 404 Not Found');
@@ -779,21 +686,16 @@ class Page_indexController extends Page_mainController
     $filePath = $basePathResolved . DIRECTORY_SEPARATOR . $file;
     $realFilePath = realpath($filePath);
 
-
-
-    // Verificar que el archivo está dentro del directorio permitido
     if ($realFilePath === false || strpos($realFilePath, $basePathResolved) !== 0) {
       header('HTTP/1.0 403 Forbidden');
       die('Acceso denegado');
     }
 
-    // Verificar que el archivo existe
     if (!file_exists($realFilePath) || !is_file($realFilePath)) {
       header('HTTP/1.0 404 Not Found');
       die('Archivo no encontrado');
     }
 
-    // Verificar que el NIT del usuario está en el nombre del archivo (seguridad adicional)
     $nit = Session::getInstance()->get('user')->identificacion;
     $nit = str_replace(['.', ',', ' '], '', $nit);
 
@@ -802,7 +704,6 @@ class Page_indexController extends Page_mainController
       die('No tiene permisos para acceder a este archivo');
     }
 
-    // Servir el archivo
     header('Content-Type: application/pdf');
     header('Content-Disposition: inline; filename="' . basename($realFilePath) . '"');
     header('Content-Length: ' . filesize($realFilePath));
@@ -812,90 +713,24 @@ class Page_indexController extends Page_mainController
     readfile($realFilePath);
     exit;
   }
-  public function buscarProveedoresOLDAction()
-  {
-    // 1) CSRF
-    if (Session::getInstance()->get('csrf_token_user') != $this->_getSanitizedParam('csrf_token')) {
-      die(json_encode([
-        'html' => '<span> Token de seguridad inválido, por favor recargue la página. </span>'
-      ]));
-    }
 
-    // 2) Parámetros
-    $year = $this->_getSanitizedParam('year');
-    $nit = Session::getInstance()->get('user')->identificacion;
-    $nit = str_replace(['.', ',', ' '], '', $nit);
-
-    // 3) Ruta base de Proveedores
-    $basePath = rtrim(str_replace('\\', '/', FILE_PATH), '/') . '/Pagos';
-
-    // 4) Patrones de búsqueda
-    $patterns = [
-      // Con tilde
-      "{$basePath}/*-Notificación Pago-*{$year}-*{$nit}.pdf",
-      "{$basePath}/*-Notificacion Pago-*{$year}-*{$nit}.pdf",
-      // Variante sin tilde / mayúsculas, por si acaso
-      "{$basePath}/*-NOTIFICACION PAGO-*{$year}-*{$nit}.pdf",
-      "{$basePath}/*-NOTIFICACIÓN PAGO-*{$year}-*{$nit}.pdf",
-      "{$basePath}/*-*-{$year}-{$nit}.pdf",
-    ];
-
-    // 5) Glob de archivos
-    $files = [];
-    foreach ($patterns as $pat) {
-      $files = array_merge($files, glob($pat));
-    }
-    $files = array_unique($files);
-
-    // 6) Montar el HTML de respuesta
-    $html = '';
-    if (count($files) > 0) {
-      foreach ($files as $file) {
-        $filename = basename($file);
-        $url = "/files/Pagos/{$filename}";
-        $html .= "<div class='col-12 mb-3'>
-                            <a href='{$url}' target='_blank'>
-                              {$filename}
-                              <i class='fa-solid fa-download'></i>
-                            </a>
-                          </div>";
-      }
-    } else {
-      $html = "<div class='col-12'>
-                    No se encontraron archivos para el NIT {$nit} en el año {$year}.
-                 </div>";
-    }
-
-    die(json_encode(['html' => $html]));
-  }
-
-
-
-
+  // Envía correo de recuperación de contraseña con token temporal
   public function enviarRecuperacionAction()
   {
-    error_reporting(E_ALL);
-
     $this->setLayout('blanco');
     $response = array();
 
     $ip_address = $_SERVER['REMOTE_ADDR'];
 
-    // Llamar a la función para verificar los intentos
     $attemptsCheck = $this->valiteAttempts($ip_address);
-
-    // Verificar el resultado de la función
-    // if (!$attemptsCheck) {
-    //   $res['status'] = 'error';
-    //   $res['message'] = 'Demasiados intentos, por favor intente de nuevo en 15 minutos';
-    //   die(json_encode($res));
-    // }
+    if (!$attemptsCheck) {
+      $res['status'] = 'error';
+      $res['message'] = 'Demasiados intentos, por favor intente de nuevo en 15 minutos';
+      die(json_encode($res));
+    }
 
     $identificacion = $this->_getSanitizedParam('identificacion');
-    $identificacion = str_replace(".", "", $identificacion);
-    $identificacion = str_replace(",", "", $identificacion);
-    $identificacion = str_replace("-", "", $identificacion);
-    $identificacion = str_replace(" ", "", $identificacion);
+    $identificacion = str_replace(['.', ',', '-', ' '], '', $identificacion);
 
     $usersModel = new Administracion_Model_DbTable_Usuarios();
     $user = $usersModel->getList("identificacion = '$identificacion'", "")[0];
@@ -903,13 +738,13 @@ class Page_indexController extends Page_mainController
     $token_date = date('Y-m-d H:i:s');
 
     if ($user) {
-		if (!$user-> email) {
-		$response = [
-			'status' => 'error',
-			'message' => 'No hay un correo asociado a este NIT, contacte con un administrador para obtener ayuda'
-		];
-		die(json_encode($response));
-    }
+      if (!$user->email) {
+        $response = [
+          'status' => 'error',
+          'message' => 'No hay un correo asociado a este NIT, contacte con un administrador para obtener ayuda'
+        ];
+        die(json_encode($response));
+      }
 
       $mailModel = new Core_Model_Sendingemail($this->_view);
       $mail = $mailModel->enviarRecuperacion($user, $token);
@@ -935,20 +770,17 @@ class Page_indexController extends Page_mainController
     }
     die(json_encode($response));
   }
+
+  // Enmascara el correo dejando visibles solo los primeros 3 caracteres y el dominio
   private function enmascararCorreo($correo)
   {
-    // Encontrar la posición del símbolo '@'
     $posicionArroba = strpos($correo, '@');
-
-    // Obtener el dominio del correo
     $dominio = substr($correo, $posicionArroba);
-
-    // Enmascarar la parte antes del dominio
     $parteEnmascarada = substr($correo, 0, 3) . str_repeat('*', $posicionArroba - 3);
-
-    // Combinar la parte enmascarada con el dominio
     return $parteEnmascarada . $dominio;
   }
+
+  // Vista de recuperación de contraseña, valida que el token no haya expirado (1 hora)
   public function recuperacionAction()
   {
     $token = $this->_getSanitizedParam('t');
@@ -968,6 +800,8 @@ class Page_indexController extends Page_mainController
       $this->_view->error = true;
     }
   }
+
+  // Actualiza la contraseña usando el flujo de recuperación por token
   public function recuperarClaveAction()
   {
     $password = $this->_getSanitizedParam('password');
@@ -990,47 +824,48 @@ class Page_indexController extends Page_mainController
     }
     die(json_encode($response));
   }
+
+  // Controla el rate limiting de recuperación de contraseña por IP (5 intentos, bloqueo 15 min)
   private function valiteAttempts($ip_address)
   {
     $currentTime = time();
 
-    // Inicializar la sesión si no existe
     if (!isset($_SESSION['password_reset_attempts'])) {
       $_SESSION['password_reset_attempts'] = [];
     }
 
-    // Verificar si la IP tiene intentos registrados
     if (isset($_SESSION['password_reset_attempts'][$ip_address])) {
       $attempts = $_SESSION['password_reset_attempts'][$ip_address];
 
-      // Verificar si la IP está bloqueada
       if ($attempts['blocked_until'] && $attempts['blocked_until'] > $currentTime) {
         return false;
       } elseif ($attempts['count'] >= 5) {
         $_SESSION['password_reset_attempts'][$ip_address] = [
           'count' => 0,
-          'blocked_until' => $currentTime + 15 * 60 // Bloquear por 15 minutos
+          'blocked_until' => $currentTime + 15 * 60
         ];
         return false;
       }
     } else {
-      // Inicializar intentos para la IP
       $_SESSION['password_reset_attempts'][$ip_address] = [
         'count' => 0,
         'blocked_until' => null
       ];
     }
 
-    // Actualizar el conteo de intentos
     $_SESSION['password_reset_attempts'][$ip_address]['count']++;
     $_SESSION['password_reset_attempts'][$ip_address]['last_attempt'] = $currentTime;
 
     return true;
   }
+
+  // Redirige al inicio
   public function solicitudAction()
   {
     header('location: /page/index/');
   }
+
+  // Crea una solicitud de registro con datos completos del proveedor y envía clave temporal
   public function crearSolicitudRegistroAction()
   {
     $this->setLayout('blanco');
@@ -1041,10 +876,7 @@ class Page_indexController extends Page_mainController
     $nombre_contacto = $this->_getSanitizedParam('nombre_contacto');
     $cargo = $this->_getSanitizedParam('cargo');
 
-    $rut_cc_ce_pasaporte = str_replace(".", "", $rut_cc_ce_pasaporte);
-    $rut_cc_ce_pasaporte = str_replace(",", "", $rut_cc_ce_pasaporte);
-    $rut_cc_ce_pasaporte = str_replace("-", "", $rut_cc_ce_pasaporte);
-    $rut_cc_ce_pasaporte = str_replace(" ", "", $rut_cc_ce_pasaporte);
+    $rut_cc_ce_pasaporte = str_replace(['.', ',', '-', ' '], '', $rut_cc_ce_pasaporte);
 
     $usersModel = new Administracion_Model_DbTable_Usuarios();
     $user = $usersModel->getList("identificacion = '$rut_cc_ce_pasaporte'", "")[0];
@@ -1056,6 +888,7 @@ class Page_indexController extends Page_mainController
       ];
       die(json_encode($response));
     }
+
     $solicitud = new Administracion_Model_DbTable_SolicitudesRegistro();
 
     $solicitudExiste = $solicitud->getList("rut_cc_ce_pasaporte = '$rut_cc_ce_pasaporte'", "")[0];
@@ -1084,15 +917,6 @@ class Page_indexController extends Page_mainController
     $dataSolicitud['estado'] = 0;
     $dataSolicitud['created_at'] = date('Y-m-d H:i:s');
 
-    //validar empresa con el correo y nit
-    // $isValidCompany = $this->validarEmpresa($dataSolicitud);
-    // if (!$isValidCompany) {
-    //   $response = [
-    //     'status' => 'error',
-    //     'message' => 'Los datos proporcionados (razón social, NIT o email) no coinciden con nuestros registros de proveedores.'
-    //   ];
-    //   die(json_encode($response));
-    // }
     $validacion = 1;
     if ($razon_social == "" or $razon_social == 1) {
       $validacion = 0;
@@ -1100,9 +924,6 @@ class Page_indexController extends Page_mainController
     if ($rut_cc_ce_pasaporte == "" or $rut_cc_ce_pasaporte == 1) {
       $validacion = 0;
     }
-    /*if ($dv == "" or $dv == 1) {
-      $validacion = 0;
-    }*/
     if ($email == "" or $email == 1 or substr_count($email, '@') != 1) {
       $validacion = 0;
     }
@@ -1123,8 +944,6 @@ class Page_indexController extends Page_mainController
 
     if ($validacion == 1) {
       $id = $solicitud->insert($dataSolicitud);
-
-      // $infoSolicitud = $solicitud->getById($id);
       $solicitud->editField($id, 'estado', '1');
 
       $userData = array();
@@ -1134,7 +953,6 @@ class Page_indexController extends Page_mainController
       $userData['email'] = $email;
       $userData['contacto_nombre'] = $nombre_contacto;
       $userData['contacto_cargo'] = $cargo;
-
 
       $usersModel = new Administracion_Model_DbTable_Usuarios();
       $idRegistro = $usersModel->insert($userData);
@@ -1162,10 +980,8 @@ class Page_indexController extends Page_mainController
     ];
     die(json_encode($response));
   }
-  public function correoAction()
-  {
-  }
 
+  // Crea una solicitud de actualización de correo para un proveedor existente
   public function crearSolicitudCorreoAction()
   {
     $this->setLayout('blanco');
@@ -1175,13 +991,10 @@ class Page_indexController extends Page_mainController
     $email = $this->_getSanitizedParam('email');
     $nombre_contacto = $this->_getSanitizedParam('nombre_contacto');
     $cargo = $this->_getSanitizedParam('cargo');
-    //honeypot
+    // Honeypot anti-bot
     $user_id = $this->_getSanitizedParam('user_id');
 
-    $rut_cc_ce_pasaporte = str_replace(".", "", $rut_cc_ce_pasaporte);
-    $rut_cc_ce_pasaporte = str_replace(",", "", $rut_cc_ce_pasaporte);
-    $rut_cc_ce_pasaporte = str_replace("-", "", $rut_cc_ce_pasaporte);
-    $rut_cc_ce_pasaporte = str_replace(" ", "", $rut_cc_ce_pasaporte);
+    $rut_cc_ce_pasaporte = str_replace(['.', ',', '-', ' '], '', $rut_cc_ce_pasaporte);
 
     $usersModel = new Administracion_Model_DbTable_Usuarios();
     $user = $dv
@@ -1214,9 +1027,6 @@ class Page_indexController extends Page_mainController
     if ($rut_cc_ce_pasaporte == "" or $rut_cc_ce_pasaporte == 1) {
       $validacion = 0;
     }
-    /*if ($dv == "" or $dv == 1) {
-      $validacion = 0;
-    }*/
     if ($email == "" or $email == 1 or substr_count($email, '@') != 1) {
       $validacion = 0;
     }
@@ -1226,11 +1036,9 @@ class Page_indexController extends Page_mainController
     if ($cargo == "" or $cargo == 1) {
       $validacion = 0;
     }
-
     if ($user_id != "") {
       $validacion = 0;
     }
-
 
     if ($validacion == 0) {
       $response = [
@@ -1240,11 +1048,8 @@ class Page_indexController extends Page_mainController
       die(json_encode($response));
     }
 
-
     if ($validacion == 1) {
-
       $id = $solicitud->insert($dataSolicitud);
-
       $infoSolicitud = $solicitud->getById($id);
 
       $userModel = new Administracion_Model_DbTable_Usuario();
@@ -1253,301 +1058,23 @@ class Page_indexController extends Page_mainController
       $mailModel->enviarSolicitudCorreo($infoSolicitud, $users);
     }
 
-
-
     $response = [
       'status' => 'success',
       'message' => 'Solicitud enviada correctamente'
     ];
     die(json_encode($response));
   }
+
+  // Obtiene el número acumulado de intentos fallidos de login para un usuario
   public function getIntentos($identificacion)
   {
     $bloqueosModel = new Administracion_Model_DbTable_Bloqueos();
-
-    // Obtiene el último registro de bloqueo del usuario
     $infoBloqueo = $bloqueosModel->getList("bloqueo_usuario = '$identificacion'", "bloqueo_id DESC")[0];
-
-    // Incrementa el contador de intentos fallidos
-    $intento = $infoBloqueo->bloqueo_intentosfallidos ?? 0;
-    $intento = $intento + 1;
-
-    // Devuelve el número de intentos
+    $intento = ($infoBloqueo->bloqueo_intentosfallidos ?? 0) + 1;
     return $intento;
   }
 
-
-  /**
-   * Consulta un proveedor por NIT - OPTIMIZADO con caché
-   */
-  public function consultarProveedorPorNit($nit)
-  {
-    $nit = trim($nit);
-
-    $proveedorModel = new Administracion_Model_DbTable_Proveedores();
-    $proveedor = $proveedorModel->getByNit($nit);
-
-    if ($proveedor) {
-      return [
-        'status' => 'found',
-        'data' => [
-          'comprador' => $proveedor->proveedor_comprador,
-          'numeroOr' => $proveedor->proveedor_numeroOr,
-          'numeroLinea' => $proveedor->proveedor_numeroLinea,
-          'codigoProducto' => $proveedor->proveedor_codigoProducto,
-          'fechaAprobacionOR' => $proveedor->proveedor_fechaAprobacionOR,
-          'fechaAprobacionSolicitud' => $proveedor->proveedor_fechaAprobacionSolicitud,
-          'proveedor' => $proveedor->proveedor_proveedor,
-          'nit' => $proveedor->proveedor_nit,
-          'emailProveedor' => $proveedor->proveedor_emailProveedor,
-          'creacionProveedor' => $proveedor->proveedor_creacionProveedor,
-          'solicitudOferta' => $proveedor->proveedor_solicitudOferta,
-          'visitaTecnica' => $proveedor->proveedor_visitaTecnica,
-          'recepcionPreguntas' => $proveedor->proveedor_recepcionPreguntas,
-          'envioRespuestas' => $proveedor->proveedor_envioRespuestas,
-          'recepcionOferta' => $proveedor->proveedor_recepcionOferta,
-          'evaluacionTecnica' => $proveedor->proveedor_evaluacionTecnica,
-          'reevaluacion' => $proveedor->proveedor_reevaluacion,
-          'adjudicacion' => $proveedor->proveedor_adjudicacion,
-          'fechaContrato' => $proveedor->proveedor_fechaContrato,
-        ]
-      ];
-    }
-
-    return ['status' => 'not_found'];
-  }
-
-  /**
-   * Trae todos los proveedores del servicio SOAP
-   * NOTA: Esta función se ejecuta solo cuando el caché está expirado
-   */
-  public function traerTodosProveedores()
-  {
-    $curl = curl_init();
-    $hoy = date('d-m-Y');
-
-    // Consultar solo el último año para reducir datos (ajustar según necesidad)
-    $fechaInicio = '01-01-2023';
-
-    $soapRequest = '<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope 
-    xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" 
-    xmlns:get="' . URL_GETINFO . '">
-    <soapenv:Header/>
-    <soapenv:Body>
-        <get:getInfoOpainBi>
-            <fechaInicio>' . $fechaInicio . '</fechaInicio>
-            <fechaFinal>' . $hoy . '</fechaFinal>
-        </get:getInfoOpainBi>
-    </soapenv:Body>
-</soapenv:Envelope>';
-
-    curl_setopt_array($curl, array(
-      CURLOPT_URL => URL_GETINFO,
-      CURLOPT_RETURNTRANSFER => true,
-      CURLOPT_ENCODING => '',
-      CURLOPT_MAXREDIRS => 10,
-      CURLOPT_TIMEOUT => 0,
-      CURLOPT_FOLLOWLOCATION => true,
-      CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-      CURLOPT_CUSTOMREQUEST => 'POST',
-      CURLOPT_POSTFIELDS => $soapRequest,
-      CURLOPT_SSL_VERIFYPEER => false,
-      CURLOPT_SSL_VERIFYHOST => false,
-      CURLOPT_HTTPHEADER => array(
-        'Content-Type: text/xml; charset=utf-8',
-        'SOAPAction: "getInfoOpainBi"',
-        'Content-Length: ' . strlen($soapRequest),
-        'Cookie: AWSALBAPP-0=AAAAAAAAAAAkd5ULrudLd73VrVj2sf+zRIUga4hS1PdF+e8m06sv0Z2e8kFdN/B+YvKKpDCLa7wfkySzIbVRATVVhJBtCy/M9TwRVJFexqYEf39TC9qjDDItTbYrwGWtNjBwOhegcuBV7W4=; PHPSESSID=b8scsmpt3hgthnplvcmopisn2g',
-        'Accept: text/xml, application/xml, application/soap+xml'
-      ),
-    ));
-
-    $response = curl_exec($curl);
-
-    if (curl_errno($curl)) {
-      // echo 'Error:' . curl_error($curl);
-      error_log('Error en getInfo: ' . curl_error($curl));
-      curl_close($curl);
-      return false;
-    }
-
-    curl_close($curl);
-
-    libxml_use_internal_errors(true);
-    $xml = simplexml_load_string($response);
-
-    if ($xml === false) {
-      // echo "No es XML válido. Errores:\n";
-      foreach (libxml_get_errors() as $error) {
-        // echo $error->message . "\n";
-      }
-      libxml_clear_errors();
-      return false;
-    }
-
-    return $this->parseXmlResponse($xml);
-  }
-  private function parseXmlResponse($xml)
-  {
-    // Registrar el namespace SOAP-ENV
-    $xml->registerXPathNamespace('soap', 'http://schemas.xmlsoap.org/soap/envelope/');
-
-    // Usar XPath para navegar más fácilmente
-    $items = $xml->xpath('//item');
-
-    $resultado = [];
-
-    foreach ($items as $item) {
-      // Verificar si tiene items anidados
-      if (isset($item->ProductLine->item)) {
-        // Items anidados
-        foreach ($item->ProductLine->item as $subItem) {
-          $resultado[] = [
-            'comprador' => trim((string) $subItem->comprador),
-            'numeroOr' => trim((string) $subItem->numeroOr),
-            'numeroLinea' => trim((string) $subItem->numeroLinea),
-            'codigoProducto' => trim((string) $subItem->codigoProducto),
-            'fechaAprobacionOR' => trim((string) $subItem->fechaAprobacionOR),
-            'fechaAprobacionSolicitud' => trim((string) $subItem->fechaAprobacionSolicitud),
-            'proveedor' => trim((string) $subItem->Proveedor),
-            'nit' => trim((string) $subItem->Nit),
-            'emailProveedor' => trim((string) $subItem->emailProveedor),
-            'creacionProveedor' => trim((string) $subItem->creacionProveedor),
-            'solicitudOferta' => trim((string) $subItem->solicitudOferta),
-            'visitaTecnica' => trim((string) $subItem->visitaTecnica),
-            'recepcionPreguntas' => trim((string) $subItem->recepcionPreguntas),
-            'envioRespuestas' => trim((string) $subItem->envioRespuestas),
-            'recepcionOferta' => trim((string) $subItem->recepcionOferta),
-            'evaluacionTecnica' => trim((string) $subItem->evaluacionTecnica),
-            'reevaluacion' => trim((string) $subItem->reevaluacion),
-            'adjudicacion' => trim((string) $subItem->adjudicacion),
-            'fechaContrato' => trim((string) $subItem->fechaContrato),
-          ];
-        }
-      } elseif (isset($item->ProductLine)) {
-        // Item directo
-        $productLine = $item->ProductLine;
-        $resultado[] = [
-          'comprador' => trim((string) $productLine->comprador),
-          'numeroOr' => trim((string) $productLine->numeroOr),
-          'numeroLinea' => trim((string) $productLine->numeroLinea),
-          'codigoProducto' => trim((string) $productLine->codigoProducto),
-          'fechaAprobacionOR' => trim((string) $productLine->fechaAprobacionOR),
-          'fechaAprobacionSolicitud' => trim((string) $productLine->fechaAprobacionSolicitud),
-          'proveedor' => trim((string) $productLine->Proveedor),
-          'nit' => trim((string) $productLine->Nit),
-          'emailProveedor' => trim((string) $productLine->emailProveedor),
-          'creacionProveedor' => trim((string) $productLine->creacionProveedor),
-          'solicitudOferta' => trim((string) $productLine->solicitudOferta),
-          'visitaTecnica' => trim((string) $productLine->visitaTecnica),
-          'recepcionPreguntas' => trim((string) $productLine->recepcionPreguntas),
-          'envioRespuestas' => trim((string) $productLine->envioRespuestas),
-          'recepcionOferta' => trim((string) $productLine->recepcionOferta),
-          'evaluacionTecnica' => trim((string) $productLine->evaluacionTecnica),
-          'reevaluacion' => trim((string) $productLine->reevaluacion),
-          'adjudicacion' => trim((string) $productLine->adjudicacion),
-          'fechaContrato' => trim((string) $productLine->fechaContrato),
-        ];
-      }
-    }
-
-
-    return $resultado;
-  }
-
-  public function sincronizarProveedoresActionOLD()
-  {
-    error_reporting(E_ALL);
-    $this->setLayout('blanco');
-
-    // Token de seguridad
-    $tokenValido = CACHE_REFRESH_TOKEN;
-    $token = $this->_getSanitizedParam('token');
-
-    if ($token !== $tokenValido) {
-      die(json_encode(['status' => 'error', 'message' => 'No autorizado']));
-    }
-
-    // set_time_limit(300); // 5 minutos
-    // ini_set('memory_limit', '-1'); //infinito
-
-    $startTime = microtime(true);
-
-    // Obtener proveedores del servicio SOAP
-    $proveedores = $this->traerTodosProveedores();
-
-    if ($proveedores === false) {
-      die(json_encode([
-        'status' => 'error',
-        'message' => 'Error al consultar el servicio SOAP 1'
-      ]));
-    }
-
-    $proveedorModel = new Administracion_Model_DbTable_Proveedores();
-    $insertados = 0;
-    $actualizados = 0;
-    $errores = 0;
-
-    foreach ($proveedores as $prov) {
-      try {
-        // Limpiar datos
-        $data = [
-          'proveedor_comprador' => trim(preg_replace('/\s+/', ' ', str_replace(['[DESACTIVADO]', '*'], '', $prov['comprador'] ?? ''))),
-          'proveedor_numeroOr' => trim($prov['numeroOr'] ?? ''),
-          'proveedor_numeroLinea' => trim($prov['numeroLinea'] ?? ''),
-          'proveedor_codigoProducto' => trim($prov['codigoProducto'] ?? ''),
-          'proveedor_fechaAprobacionOR' => trim($prov['fechaAprobacionOR'] ?? ''),
-          'proveedor_fechaAprobacionSolicitud' => trim($prov['fechaAprobacionSolicitud'] ?? ''),
-          'proveedor_proveedor' => trim(preg_replace('/\s+/', ' ', str_replace(['[DESACTIVADO]', '*'], '', $prov['proveedor'] ?? ''))),
-          'proveedor_nit' => trim($prov['nit'] ?? ''),
-          'proveedor_emailProveedor' => trim(str_replace('[DESACTIVADO]', '', $prov['emailProveedor'] ?? '')),
-          'proveedor_creacionProveedor' => trim($prov['creacionProveedor'] ?? ''),
-          'proveedor_solicitudOferta' => trim($prov['solicitudOferta'] ?? ''),
-          'proveedor_visitaTecnica' => trim($prov['visitaTecnica'] ?? ''),
-          'proveedor_recepcionPreguntas' => trim($prov['recepcionPreguntas'] ?? ''),
-          'proveedor_envioRespuestas' => trim($prov['envioRespuestas'] ?? ''),
-          'proveedor_recepcionOferta' => trim($prov['recepcionOferta'] ?? ''),
-          'proveedor_evaluacionTecnica' => trim($prov['evaluacionTecnica'] ?? ''),
-          'proveedor_reevaluacion' => trim($prov['reevaluacion'] ?? ''),
-          'proveedor_adjudicacion' => trim($prov['adjudicacion'] ?? ''),
-          'proveedor_fechaContrato' => trim($prov['fechaContrato'] ?? ''),
-        ];
-
-        // Saltar si no tiene NIT
-        if (
-          empty($data['proveedor_nit']) ||
-          empty($data['proveedor_emailProveedor']) ||
-          empty($data['proveedor_comprador']) ||
-          empty($data['proveedor_proveedor'])
-        ) {
-          continue;
-        }
-
-        $proveedorModel->insert($data);
-        $insertados++;
-
-      } catch (Exception $e) {
-        $errores++;
-        error_log("Error sincronizando proveedor: " . $e->getMessage());
-      }
-    }
-
-    $endTime = microtime(true);
-    $duration = round($endTime - $startTime, 2);
-
-    die(json_encode([
-      'status' => 'success',
-      'message' => 'Sincronización completada',
-      'total_procesados' => count($proveedores),
-      'insertados_actualizados' => $insertados,
-      'errores' => $errores,
-      'tiempo_segundos' => $duration,
-      'proxima_sincronizacion' => date('Y-m-d H:i:s', strtotime('+1 day'))
-    ]));
-  }
-
-
+  // Acción de prueba para verificar el envío de correos
   public function pruebaenvioAction()
   {
     $this->setLayout('blanco');
@@ -1589,231 +1116,70 @@ class Page_indexController extends Page_mainController
     foreach ($bccs as $bcc) {
       $emailModel->getMail()->addBCC($bcc);
     }
-    //$emailModel->getMail()->addAddress($email);
 
-    // Intentar enviar
     $enviado = $emailModel->sed();
     if ($enviado) {
       echo "Correo enviado correctamente.";
     } else {
       echo $emailModel->getMail()->ErrorInfo;
     }
-
   }
-
-  public function sincronizarProveedoresAction()
+  public function testAction()
   {
-    error_reporting(E_ALL);
+
     $this->setLayout('blanco');
+    $nit = '900375398';
+    $url = "http://10.30.240.8/api/Providers/$nit";
+    $key = Config_Config::getInstance()->getValue('keys/keyProviders');
 
-    // Token de seguridad
-    $tokenValido = CACHE_REFRESH_TOKEN;
-    $token = $this->_getSanitizedParam('token');
 
-    if ($token !== $tokenValido) {
-      die(json_encode(['status' => 'error', 'message' => 'No autorizado']));
-    }
+    $ch = curl_init();
 
-    // set_time_limit(300);
-    // ini_set('memory_limit', '512M');
-
-    $startTime = microtime(true);
-
-    // SIMPLIFICADO: Solo traer último día por defecto
-    $modo = $this->_getSanitizedParam('modo') ?? 'diario';
-
-    if ($modo === '48h') {
-      $fechaInicio = date('d-m-Y', strtotime('-2 days'));
-      $diasConsultados = 2;
-    } else {
-      // Por defecto: solo ayer y hoy (más seguro que solo hoy)
-      $fechaInicio = date('d-m-Y', strtotime('-1 day'));
-      $diasConsultados = 1;
-    }
-
-    $fechaFinal = date('d-m-Y');
-
-    // Obtener proveedores del rango de fechas
-    $proveedores = $this->traerProveedoresPorFechas($fechaInicio, $fechaFinal);
-
-    if ($proveedores === false) {
-      die(json_encode([
-        'status' => 'error',
-        'message' => 'Error al consultar el servicio SOAP',
-        'rango_consultado' => "{$fechaInicio} a {$fechaFinal}"
-      ]));
-    }
-
-    $proveedorModel = new Administracion_Model_DbTable_Proveedores();
-    $insertados = 0;
-    $actualizados = 0;
-    $omitidos = 0;
-    $errores = [];
-
-    foreach ($proveedores as $prov) {
-      try {
-        // Limpiar datos
-        $data = [
-          'proveedor_comprador' => $this->limpiarTexto($prov['comprador'] ?? ''),
-          'proveedor_numeroOr' => trim($prov['numeroOr'] ?? ''),
-          'proveedor_numeroLinea' => trim($prov['numeroLinea'] ?? ''),
-          'proveedor_codigoProducto' => trim($prov['codigoProducto'] ?? ''),
-          'proveedor_fechaAprobacionOR' => trim($prov['fechaAprobacionOR'] ?? ''),
-          'proveedor_fechaAprobacionSolicitud' => trim($prov['fechaAprobacionSolicitud'] ?? ''),
-          'proveedor_proveedor' => $this->limpiarTexto($prov['proveedor'] ?? ''),
-          'proveedor_nit' => trim($prov['nit'] ?? ''),
-          'proveedor_emailProveedor' => $this->limpiarTexto($prov['emailProveedor'] ?? ''),
-          'proveedor_creacionProveedor' => trim($prov['creacionProveedor'] ?? ''),
-          'proveedor_solicitudOferta' => trim($prov['solicitudOferta'] ?? ''),
-          'proveedor_visitaTecnica' => trim($prov['visitaTecnica'] ?? ''),
-          'proveedor_recepcionPreguntas' => trim($prov['recepcionPreguntas'] ?? ''),
-          'proveedor_envioRespuestas' => trim($prov['envioRespuestas'] ?? ''),
-          'proveedor_recepcionOferta' => trim($prov['recepcionOferta'] ?? ''),
-          'proveedor_evaluacionTecnica' => trim($prov['evaluacionTecnica'] ?? ''),
-          'proveedor_reevaluacion' => trim($prov['reevaluacion'] ?? ''),
-          'proveedor_adjudicacion' => trim($prov['adjudicacion'] ?? ''),
-          'proveedor_fechaContrato' => trim($prov['fechaContrato'] ?? ''),
-        ];
-
-        // Validar campos obligatorios
-        if (!$this->validarProveedor($data)) {
-          $omitidos++;
-          continue;
-        }
-
-        // Insertar o actualizar
-        $proveedorModel->insert($data);
-        $insertados++;
-
-      } catch (Exception $e) {
-        $errores[] = [
-          'nit' => $data['proveedor_nit'] ?? 'N/A',
-          'error' => $e->getMessage()
-        ];
-        error_log("Error sync NIT {$data['proveedor_nit']}: " . $e->getMessage());
-      }
-    }
-
-    $endTime = microtime(true);
-    $duration = round($endTime - $startTime, 2);
-
-    // Registrar log
-    $this->registrarLogSincronizacion([
-      'fecha_inicio' => $fechaInicio,
-      'fecha_final' => $fechaFinal,
-      'total_procesados' => count($proveedores),
-      'insertados' => $insertados,
-      'omitidos' => $omitidos,
-      'errores_count' => count($errores),
-      'errores_detalle' => $errores,
-      'duracion' => $duration
+    curl_setopt_array($ch, [
+      CURLOPT_URL => $url,
+      CURLOPT_RETURNTRANSFER => true,
+      CURLOPT_CUSTOMREQUEST => "GET",
+      CURLOPT_HTTPHEADER => [
+        "Accept: application/json",
+        "X-API-Key: $key"
+      ],
+      CURLOPT_HEADER => true,
+      CURLOPT_TIMEOUT => 30
     ]);
 
-    die(json_encode([
-      'status' => 'success',
-      'message' => 'Sincronización completada',
-      'modo' => $modo,
-      'dias_consultados' => $diasConsultados,
-      'rango_fechas' => "{$fechaInicio} a {$fechaFinal}",
-      'total_procesados' => count($proveedores),
-      'insertados_actualizados' => $insertados,
-      'omitidos' => $omitidos,
-      'errores' => count($errores),
-      'tiempo_segundos' => $duration
-    ]));
-  }
+    $response = curl_exec($ch);
 
-  // Método helper para limpiar texto
-  private function limpiarTexto($texto)
-  {
-    return trim(preg_replace('/\s+/', ' ', str_replace(['[DESACTIVADO]', '*'], '', $texto)));
-  }
-
-  // Método helper para validar proveedor
-  private function validarProveedor($data)
-  {
-    return !empty($data['proveedor_nit']) &&
-      !empty($data['proveedor_emailProveedor']) &&
-      !empty($data['proveedor_comprador']) &&
-      !empty($data['proveedor_proveedor']);
-  }
-
-  /**
-   * Trae proveedores filtrados por rango de fechas
-   */
-  private function traerProveedoresPorFechas($fechaInicio, $fechaFinal)
-  {
-    $curl = curl_init();
-
-    $soapRequest = '<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope 
-    xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" 
-    xmlns:get="' . URL_GETINFO . '">
-    <soapenv:Header/>
-    <soapenv:Body>
-        <get:getInfoOpainBi>
-            <fechaInicio>' . $fechaInicio . '</fechaInicio>
-            <fechaFinal>' . $fechaFinal . '</fechaFinal>
-        </get:getInfoOpainBi>
-    </soapenv:Body>
-</soapenv:Envelope>';
-
-    curl_setopt_array($curl, array(
-      CURLOPT_URL => URL_GETINFO,
-      CURLOPT_RETURNTRANSFER => true,
-      CURLOPT_ENCODING => '',
-      CURLOPT_MAXREDIRS => 10,
-      CURLOPT_TIMEOUT => 120,
-      CURLOPT_FOLLOWLOCATION => true,
-      CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-      CURLOPT_CUSTOMREQUEST => 'POST',
-      CURLOPT_POSTFIELDS => $soapRequest,
-      CURLOPT_SSL_VERIFYPEER => false,
-      CURLOPT_SSL_VERIFYHOST => false,
-      CURLOPT_HTTPHEADER => array(
-        'Content-Type: text/xml; charset=utf-8',
-        'SOAPAction: "getInfoOpainBi"',
-        'Content-Length: ' . strlen($soapRequest),
-        'Accept: text/xml, application/xml, application/soap+xml'
-      ),
-    ));
-
-    $response = curl_exec($curl);
-
-    if (curl_errno($curl)) {
-      error_log('Error SOAP (fechas): ' . curl_error($curl));
-      curl_close($curl);
-      return false;
+    if (curl_errno($ch)) {
+      echo "cURL Error:\n";
+      echo curl_error($ch);
+      curl_close($ch);
+      return;
     }
 
-    curl_close($curl);
+    $info = curl_getinfo($ch);
+    $httpCode = $info['http_code'];
+    $headerSize = $info['header_size'];
 
-    libxml_use_internal_errors(true);
-    $xml = simplexml_load_string($response);
+    $headers = substr($response, 0, $headerSize);
+    $body = substr($response, $headerSize);
 
-    if ($xml === false) {
-      foreach (libxml_get_errors() as $error) {
-        error_log('XML Error: ' . $error->message);
+    curl_close($ch);
+
+    echo "URL: $url<br>";
+    echo "HTTP Code: $httpCode<br>";
+    echo "Tiempo total: {$info['total_time']}s<br>";
+    echo "Tamaño respuesta: {$info['size_download']} bytes<br><br>";
+
+    echo "HEADERS:<br>" . nl2br($headers) . "<br><br>";
+    echo "BODY:<br>" . nl2br($body) . "<br><br>";
+
+    if ($httpCode < 200 || $httpCode >= 300) {
+      echo "Error HTTP detectado<br>";
+
+      $json = json_decode($body, true);
+      if ($json) {
+        echo "Mensaje API: " . ($json['message'] ?? 'Sin mensaje') . "<br>";
       }
-      libxml_clear_errors();
-      return false;
     }
-
-    return $this->parseXmlResponse($xml);
-  }
-
-  /**
-   * Registra un log de cada sincronización
-   */
-  private function registrarLogSincronizacion($datos)
-  {
-    $logData = [
-      'log_tipo' => 'SYNC_PROVEEDORES',
-      'log_usuario' => 'SYSTEM_CRON',
-      'log_log' => json_encode($datos, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-    ];
-
-    $logModel = new Administracion_Model_DbTable_Log();
-    $logModel->insert($logData);
   }
 }

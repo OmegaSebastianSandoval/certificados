@@ -28,9 +28,12 @@
                 </span>
               </div>
             </div>
-            <div class="col-xxl-6 col-lg-8 col-9 mx-auto">
+            <div class="col-lg-8 col-md-9 col-10 mx-auto">
               <form action="/page/index/login" class="row" method="post" id="login">
                 <input type="hidden" name="email">
+                <div class="alert alert-info py-2 mb-2 text-start" role="alert" style="font-size: 0.85rem;">
+                  <i class="fas fa-info-circle me-1"></i> Ingrese el NIT <strong>sin</strong> dígito de verificación.
+                </div>
                 <input type="text" class="form-control mb-3 no-symbols" name="identificacion" placeholder="NIT" required
                   autocomplete="off">
                 <input type="password" class="form-control mb-3" name="password" placeholder="Contraseña"
@@ -40,7 +43,7 @@
                 <div class="form-group my-2 d-flex justify-content-center">
                   <div class="g-recaptcha" data-sitekey="6LfFDZskAAAAAE2HmM7Z16hOOToYIWZC_31E61Sr"></div>
                 </div>
-				<input type="hidden" name="_csrf"  value="<?= md5("OMEGA".date("Ymd")) ?>">
+                <input type="hidden" name="_csrf" value="<?= md5("OMEGA" . date("Ymd")) ?>">
                 <button type="submit">INGRESAR</button>
               </form>
             </div>

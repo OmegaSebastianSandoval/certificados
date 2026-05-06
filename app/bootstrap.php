@@ -65,14 +65,7 @@ if (strpos($_SERVER['HTTP_HOST'], "certificados.opain.co:8443") !== false) {
 }
 define('APPLICATION_ENV', getenv('APPLICATION_ENV') ? getenv('APPLICATION_ENV') : $env);
 error_reporting(E_STRICT);
-if (APPLICATION_ENV == 'production') {
-  define('URL_GETINFO', "https://compras.opain.co/soap/getInfoOpainBi");
 
-} else {
-  define('URL_GETINFO', "https://compras.opain.co/soap/getInfoOpainBi");
-  // define('URL_GETINFO', "https://testopain.itbid.org/soap/getInfoOpainBi");
-
-}
 if ($_GET['debug'] == "1") {
   error_reporting(E_ALL);
 }

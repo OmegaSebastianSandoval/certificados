@@ -24,7 +24,8 @@
   <link rel="shortcut icon" href="/images/<?= $infopage->info_pagina_favicon; ?>">
 
 
-  <script type="text/javascript" id="www-widgetapi-script" src="https://s.ytimg.com/yts/jsbin/www-widgetapi-vflS50iB-/www-widgetapi.js" async=""></script>
+  <script type="text/javascript" id="www-widgetapi-script"
+    src="https://s.ytimg.com/yts/jsbin/www-widgetapi-vflS50iB-/www-widgetapi.js" async=""></script>
 
   <!-- Jquery -->
   <script src="/components/jquery/jquery-3.6.0.min.js"></script>
@@ -41,7 +42,7 @@
   <link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/npm/[email protected]/slick/slick-theme.css" />
   <script src="/components/fullpage/slick/slick.min.js"></script>
 -->
-    <!--<script src="/components/jquery-knob/js/jquery.knob.js"></script>-->
+  <!--<script src="/components/jquery-knob/js/jquery.knob.js"></script>-->
 
   <!-- SweetAlert -->
   <!-- <script src="//cdn.jsdelivr.net/npm/sweetalert2@11"></script> -->
@@ -53,8 +54,8 @@
   <!-- Recaptcha -->
   <script src='https://www.google.com/recaptcha/api.js'></script>
   <meta name="description" content="<?= $this->_data['meta_description']; ?>" />
-    <meta name=" keywords" content="<?= $this->_data['meta_keywords']; ?>" />
-  <?php echo $this->_data['scripts'];  ?>
+  <meta name=" keywords" content="<?= $this->_data['meta_keywords']; ?>" />
+  <?php echo $this->_data['scripts']; ?>
   <script src="https://www.google.com/recaptcha/api.js" async defer></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
