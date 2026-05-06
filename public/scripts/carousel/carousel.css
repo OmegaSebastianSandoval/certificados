@@ -1,0 +1,66 @@
+
+
+.carouselsection{
+	display: block;
+	position: relative;
+}
+
+
+.carousel_inner{
+	position: relative; 
+	width: 100%; 
+	overflow: hidden; 
+	margin:0; 
+	text-align: left; 
+}
+.carousel_inner ul {
+	position:relative;
+	left:0px; /* important (this should be negative number of list items width(including margin) */
+	list-style-type: none; /* removing the default styling for unordered list items */
+	margin: 0px;
+	padding: 0px;
+	width:9999px;
+	z-index: 1;
+}
+.carousel_inner ul li{
+	display:table-cell;
+	vertical-align: top;
+	text-align: center;
+	margin: 0;
+	padding: 0;
+	position:relative;
+	overflow:hidden;
+	padding-left: 20px;
+    padding-right: 20px
+}
+
+.carouselsection .right_scroll{
+	position: absolute;
+	background: #FFFFFF;
+	font-size: 20px;
+	width: 30px;
+	padding: 0px;
+	top:50%;
+	right: 5px;
+	text-align: center;
+	border-radius: 5em;
+	z-index: 2;
+	opacity: 0;
+}
+.carouselsection .left_scroll{
+	position: absolute;
+	background: #FFFFFF;
+	font-size: 20px;
+	width: 30px;
+	padding: 0px;
+	top:50%;
+	left:5px;
+	text-align: center;
+	border-radius: 5em;
+	z-index: 2;
+	opacity: 0;
+}
+
+.carouselsection:hover .right_scroll, .carouselsection:hover .left_scroll{
+	opacity: 0.8;
+}
