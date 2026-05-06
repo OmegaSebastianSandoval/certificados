@@ -2,6 +2,7 @@
 
 class Page_indexController extends Page_mainController
 {
+  const SYNC_CYCLES_PER_DAY = 1;
 
   public function indexAction()
   {
@@ -183,6 +184,161 @@ class Page_indexController extends Page_mainController
       ];
     }
     die(json_encode($response));
+  }
+
+  // Sincroniza emails de todos los usuarios contra la API de proveedores. Diseñada para cron HTTP cada 2 min.
+  public function sincronizarproveedoresAction()
+  {
+    $this->setLayout('blanco');
+    ini_set('memory_limit', '512M');
+    ini_set('max_execution_time', -1);
+
+    $cronKey = Config_Config::getInstance()->getValue('keys/cronKey');
+    if ($this->_getSanitizedParam('key') !== $cronKey) {
+      die(json_encode(['status' => 'unauthorized']));
+    }
+
+    $inicio = microtime(true);
+    $checkpointPath = ROOT . '../storage/sync_checkpoint.json';
+    $today = date('Y-m-d');
+
+    $checkpoint = ['last_id' => 0, 'cycle_updated' => 0, 'cycle_total' => 0, 'cycles_today' => 0, 'last_cycle_date' => ''];
+    if (file_exists($checkpointPath)) {
+      $checkpoint = json_decode(file_get_contents($checkpointPath), true) ?: $checkpoint;
+    }
+
+    $lastCycleDate = $checkpoint['last_cycle_date'] ?? '';
+    $isNewDay = $lastCycleDate !== $today;
+
+    if ($isNewDay) {
+      $cyclesToday = 0;
+      $lastId = 0;
+      $cycleUpdated = 0;
+      $cycleTotal = 0;
+    } else {
+      $cyclesToday = (int) ($checkpoint['cycles_today'] ?? 0);
+      $lastId = (int) $checkpoint['last_id'];
+      $cycleUpdated = (int) $checkpoint['cycle_updated'];
+      $cycleTotal = (int) $checkpoint['cycle_total'];
+    }
+
+    $usersModel = new Administracion_Model_DbTable_Usuarios();
+
+    if ($cyclesToday >= self::SYNC_CYCLES_PER_DAY) {
+      $currentTotal = count($usersModel->getList("", ""));
+      $savedTotal = (int) ($checkpoint['total_users'] ?? 0);
+      if ($currentTotal === $savedTotal) {
+        die(json_encode(['status' => 'daily_limit_reached', 'cycles_today' => $cyclesToday, 'limit' => self::SYNC_CYCLES_PER_DAY, 'date' => $today, 'total_users' => $currentTotal]));
+      }
+      $cyclesToday = 0;
+      $lastId = 0;
+      $cycleUpdated = 0;
+      $cycleTotal = 0;
+    }
+    $users = $usersModel->getListPages("id > $lastId", "id ASC", 0, 70);
+
+    if (empty($users)) {
+      if ($cycleTotal > 0) {
+        $cyclesToday++;
+      }
+      $checkpoint = [
+        'last_id' => 0,
+        'cycle_updated' => 0,
+        'cycle_total' => 0,
+        'last_run' => date('Y-m-d H:i:s'),
+        'cycles_today' => $cyclesToday,
+        'last_cycle_date' => $today,
+        'total_users' => $cycleTotal
+      ];
+      $this->guardarCheckpoint($checkpointPath, $checkpoint);
+      die(json_encode(['status' => 'cycle_complete', 'total_updated_this_cycle' => $cycleUpdated, 'cycles_today' => $cyclesToday, 'limit' => self::SYNC_CYCLES_PER_DAY]));
+    }
+
+    $processed = 0;
+    $updated = 0;
+    $errors = [];
+
+    foreach ($users as $user) {
+      if ((microtime(true) - $inicio) > 55) {
+        break;
+      }
+
+      $apiData = $this->consultarProveedorConBackoff($user->identificacion);
+
+      if ($apiData === null) {
+        $errors[] = $user->identificacion;
+      } elseif (!empty($apiData->providerEmail) && $apiData->providerEmail !== $user->email) {
+        $usersModel->editField($user->id, 'email', $apiData->providerEmail);
+        $usersModel->editField($user->id, 'razon_social', $apiData->providerName);
+        $updated++;
+        $cycleUpdated++;
+      }
+
+      $lastId = (int) $user->id;
+      $cycleTotal++;
+      $processed++;
+
+      $checkpoint = [
+        'last_id' => $lastId,
+        'cycle_updated' => $cycleUpdated,
+        'cycle_total' => $cycleTotal,
+        'last_run' => date('Y-m-d H:i:s')
+      ];
+      $this->guardarCheckpoint($checkpointPath, $checkpoint);
+
+      usleep(650000);
+    }
+
+    $elapsed = round(microtime(true) - $inicio, 2);
+
+    $logData = [
+      'log_tipo' => 'SYNC_PROVEEDORES',
+      'log_usuario' => 'CRON',
+      'log_log' => print_r([
+        'fecha' => date('Y-m-d H:i:s'),
+        'processed' => $processed,
+        'updated' => $updated,
+        'errors' => $errors,
+        'last_id' => $lastId,
+        'elapsed' => "{$elapsed}s"
+      ], true)
+    ];
+    $logModel = new Administracion_Model_DbTable_Log();
+    $logModel->insert($logData);
+
+    die(json_encode([
+      'status' => 'ok',
+      'processed' => $processed,
+      'updated' => $updated,
+      'errors' => $errors,
+      'last_id' => $lastId,
+      'elapsed' => "{$elapsed}s"
+    ]));
+  }
+
+  private function guardarCheckpoint($path, $data)
+  {
+    $dir = dirname($path);
+    if (!is_dir($dir)) {
+      mkdir($dir, 0755, true);
+    }
+    file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT));
+  }
+
+  // Llama a consultarProveedor con exponential backoff (hasta 3 intentos: espera 1s, 2s).
+  private function consultarProveedorConBackoff($nit)
+  {
+    $maxIntentos = 2;
+    for ($intento = 1; $intento <= $maxIntentos; $intento++) {
+      $resultado = $this->consultarProveedor($nit);
+      if ($resultado !== null) {
+        return $resultado;
+      }
+      if ($intento < $maxIntentos) {
+        sleep($intento);
+      }
+    }
+    return null;
   }
 
   // Consulta el proveedor en la API interna por NIT. Retorna el array 'data' o null si no existe/falla.
